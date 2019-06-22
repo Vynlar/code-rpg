@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 import Browser
-import Element exposing (Element, centerX, centerY, column, el, fill, paddingXY, px, row, text, width)
+import Element exposing (Element, alignRight, centerX, centerY, column, el, fill, paddingXY, px, row, text, width)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
@@ -213,6 +213,7 @@ type Color
     | Black
     | Timberwolf
     | White
+    | Grey
 
 
 colorToElementColor : Color -> Element.Color
@@ -235,6 +236,9 @@ colorToElementColor color =
 
         White ->
             Element.rgb255 255 255 255
+
+        Grey ->
+            Element.rgb255 155 155 155
 
 
 backgroundColor : Color -> Element.Attr decorative msg
@@ -330,14 +334,8 @@ paddingXY x y =
 
 renderDrone : Drone -> Element Msg
 renderDrone drone =
-    let
-        kind =
-            case drone of
-                Drone _ ->
-                    "Basic"
-    in
     column [ padding Medium, backgroundColor MidnightGreen, rounded, fontColor White ]
-        [ text kind
+        [ text "Drone 1"
         , row []
             [ text (componentName Health ++ ": ")
             , text <| String.fromInt (getHealth drone)
@@ -364,7 +362,7 @@ renderCreateDronePanel : Int -> List Component -> Element Msg
 renderCreateDronePanel crypto chosenComponents =
     column [ padding Medium, backgroundColor White, rounded, spacing Medium, width (px 500) ]
         [ label [] "Store"
-        , row
+        , Element.wrappedRow
             [ spacing ExtraSmall
             , padding Small
             , Border.solid
@@ -379,10 +377,22 @@ renderCreateDronePanel crypto chosenComponents =
             label [ Font.bold ] "Choose components from the store above"
 
           else
-            row [ spacing ExtraSmall ] (text "Base cost 10 + " :: List.indexedMap (\i c -> renderComponentButton c (DeselectComponent i)) chosenComponents)
-        , button []
+            Element.wrappedRow [ spacing ExtraSmall ] (text "Base cost 10 + " :: List.indexedMap (\i c -> renderComponentButton c (DeselectComponent i)) chosenComponents)
+        , let
+            canAfford =
+                crypto - componentsToCost chosenComponents >= 0
+          in
+          button
+            ((if canAfford then
+                []
+
+              else
+                [ backgroundColor Grey ]
+             )
+                ++ [ alignRight ]
+            )
             { onPress =
-                if crypto - componentsToCost chosenComponents >= 0 then
+                if canAfford then
                     Just (CreateDrone (Drone []))
 
                 else
