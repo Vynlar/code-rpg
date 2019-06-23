@@ -7,6 +7,7 @@ import Element.Border as Border
 import Element.Font as Font
 import Element.Input as Input
 import Html exposing (Html)
+import Time
 
 
 
@@ -16,19 +17,25 @@ import Html exposing (Html)
 
 
 type alias Model =
-    { compute : Int
-    , crypto : Int
+    { compute : Float
+    , crypto : Float
     , drones : List Drone
     , chosenComponents : List Component
+    , nextDroneId : Int
     }
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
+    let
+        components =
+            [ HealthComponent ]
+    in
     ( { compute = 0
       , crypto = 50
-      , drones = [ Drone [ Health ] ]
+      , drones = [ initDrone 0 components ]
       , chosenComponents = []
+      , nextDroneId = 1
       }
     , Cmd.none
     )
@@ -41,8 +48,8 @@ init _ =
 
 
 type Component
-    = Health
-    | Capacity
+    = HealthComponent
+    | PerformanceComponent
 
 
 allComponents : List Component
@@ -50,66 +57,83 @@ allComponents =
     let
         {- This exists only to cause compilation errors when a new value for Component is added -}
         validator =
-            case Health of
-                Health ->
-                    1
+            case HealthComponent of
+                HealthComponent ->
+                    ()
 
-                Capacity ->
-                    1
+                PerformanceComponent ->
+                    ()
     in
-    [ Health, Capacity ]
+    [ HealthComponent, PerformanceComponent ]
 
 
 type Drone
-    = Drone (List Component)
+    = Drone Int Stats (List Component)
+
+
+initDrone : Int -> List Component -> Drone
+initDrone id components =
+    Drone id (componentsToMaxStats components) components
 
 
 type alias Stats =
-    { health : Int, capacity : Int }
+    { health : Int, performance : Int }
 
 
 baseStats : Stats
 baseStats =
     { health = 10
-    , capacity = 5
+    , performance = 5
+    }
+
+
+emptyStats : Stats
+emptyStats =
+    { health = 0
+    , performance = 0
     }
 
 
 combineStats : Stats -> Stats -> Stats
 combineStats a b =
     { health = a.health + b.health
-    , capacity = a.capacity + b.capacity
+    , performance = a.performance + b.performance
     }
 
 
-componentsToStats : Component -> Stats
-componentsToStats component =
+componentToMaxStats : Component -> Stats
+componentToMaxStats component =
     case component of
-        Health ->
-            { health = 10, capacity = 0 }
+        HealthComponent ->
+            { health = 10, performance = 0 }
 
-        Capacity ->
-            { health = 0, capacity = 3 }
+        PerformanceComponent ->
+            { health = 0, performance = 1 }
 
 
-droneToStats : Drone -> Stats
-droneToStats drone =
+componentsToMaxStats : List Component -> Stats
+componentsToMaxStats =
+    List.foldl (combineStats << componentToMaxStats) baseStats
+
+
+droneToMaxStats : Drone -> Stats
+droneToMaxStats drone =
     let
         components =
             case drone of
-                Drone c ->
+                Drone _ _ c ->
                     c
     in
-    List.foldl (combineStats << componentsToStats) baseStats components
+    componentsToMaxStats components
 
 
 componentToCost : Component -> Int
 componentToCost component =
     case component of
-        Health ->
+        HealthComponent ->
             5
 
-        Capacity ->
+        PerformanceComponent ->
             5
 
 
@@ -121,35 +145,21 @@ componentsToCost =
 componentName : Component -> String
 componentName component =
     case component of
-        Health ->
+        HealthComponent ->
             "Health"
 
-        Capacity ->
-            "Capacity"
-
-
-componentValue : Drone -> Component -> Int
-componentValue drone component =
-    let
-        stats =
-            droneToStats drone
-    in
-    case component of
-        Health ->
-            stats.health
-
-        Capacity ->
-            stats.capacity
+        PerformanceComponent ->
+            "Performance"
 
 
 getHealth : Drone -> Int
-getHealth drone =
-    componentValue drone Health
+getHealth (Drone _ stats _) =
+    stats.health
 
 
-getCapacity : Drone -> Int
-getCapacity drone =
-    componentValue drone Capacity
+getPerformance : Drone -> Int
+getPerformance (Drone _ stats _) =
+    stats.performance
 
 
 
@@ -159,33 +169,62 @@ getCapacity drone =
 
 
 type Msg
-    = CreateDrone Drone
+    = CreateDrone (List Component)
     | SelectComponent Component
     | DeselectComponent Int
+    | Tick Time.Posix
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        CreateDrone drone ->
+        CreateDrone components ->
             let
                 newDrone =
-                    Drone model.chosenComponents
+                    initDrone model.nextDroneId model.chosenComponents
 
                 cost =
                     componentsToCost model.chosenComponents
             in
-            if model.crypto - cost < 0 then
+            if model.crypto - toFloat cost < 0 then
                 ( model, Cmd.none )
 
             else
-                ( { model | drones = newDrone :: model.drones, chosenComponents = [], crypto = model.crypto - cost }, Cmd.none )
+                ( { model
+                    | drones = newDrone :: model.drones
+                    , chosenComponents = []
+                    , crypto = model.crypto - toFloat cost
+                    , nextDroneId = model.nextDroneId + 1
+                  }
+                , Cmd.none
+                )
 
         SelectComponent component ->
             ( { model | chosenComponents = component :: model.chosenComponents }, Cmd.none )
 
         DeselectComponent index ->
             ( { model | chosenComponents = List.take index model.chosenComponents ++ List.drop (index + 1) model.chosenComponents }, Cmd.none )
+
+        Tick _ ->
+            let
+                { cryptoDelta, computeDelta } =
+                    tick model.drones
+            in
+            ( { model | crypto = model.crypto + cryptoDelta, compute = model.compute + computeDelta }, Cmd.none )
+
+
+tick : List Drone -> { cryptoDelta : Float, computeDelta : Float }
+tick drones =
+    let
+        speedFactor =
+            0.001
+
+        stats =
+            drones
+                |> List.map droneToMaxStats
+                |> List.foldl combineStats emptyStats
+    in
+    { cryptoDelta = 0 * speedFactor, computeDelta = toFloat stats.performance * speedFactor }
 
 
 
@@ -196,7 +235,7 @@ update msg model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    Time.every 100 Tick
 
 
 
@@ -334,16 +373,22 @@ paddingXY x y =
 
 renderDrone : Drone -> Element Msg
 renderDrone drone =
-    column [ padding Medium, backgroundColor MidnightGreen, rounded, fontColor White ]
-        [ text "Drone 1"
+    let
+        droneId =
+            case drone of
+                Drone id _ _ ->
+                    id
+    in
+    column [ padding Medium, backgroundColor MidnightGreen, rounded, fontColor White, width (Element.maximum 300 fill) ]
+        [ text ("Drone " ++ String.fromInt droneId)
         , row []
-            [ text (componentName Health ++ ": ")
+            [ text (componentName HealthComponent ++ ": ")
             , text <| String.fromInt (getHealth drone)
             ]
         , row
             []
-            [ text (componentName Capacity ++ ": ")
-            , text <| String.fromInt (getCapacity drone)
+            [ text (componentName PerformanceComponent ++ ": ")
+            , text <| String.fromInt (getPerformance drone)
             ]
         ]
 
@@ -358,20 +403,25 @@ label attrs message =
     el ([ Font.size 12 ] ++ attrs) (text (String.toUpper message))
 
 
-renderCreateDronePanel : Int -> List Component -> Element Msg
+renderCreateDronePanel : Float -> List Component -> Element Msg
 renderCreateDronePanel crypto chosenComponents =
     column [ padding Medium, backgroundColor White, rounded, spacing Medium, width (px 500) ]
-        [ label [] "Store"
-        , Element.wrappedRow
-            [ spacing ExtraSmall
-            , padding Small
-            , Border.solid
+        [ column
+            [ Border.solid
             , borderColor Timberwolf
             , Border.width 1
+            , padding Small
             , rounded
+            , spacing Small
             , width fill
             ]
-            (List.map (\c -> renderComponentButton c (SelectComponent c)) allComponents)
+            [ label [] "Store"
+            , Element.wrappedRow
+                [ spacing ExtraSmall
+                , width fill
+                ]
+                (List.map (\c -> renderComponentButton c (SelectComponent c)) allComponents)
+            ]
         , label [] "loadout"
         , if List.length chosenComponents == 0 then
             label [ Font.bold ] "Choose components from the store above"
@@ -380,7 +430,7 @@ renderCreateDronePanel crypto chosenComponents =
             Element.wrappedRow [ spacing ExtraSmall ] (text "Base cost 10 + " :: List.indexedMap (\i c -> renderComponentButton c (DeselectComponent i)) chosenComponents)
         , let
             canAfford =
-                crypto - componentsToCost chosenComponents >= 0
+                crypto - toFloat (componentsToCost chosenComponents) >= 0
           in
           button
             ((if canAfford then
@@ -393,7 +443,7 @@ renderCreateDronePanel crypto chosenComponents =
             )
             { onPress =
                 if canAfford then
-                    Just (CreateDrone (Drone []))
+                    Just (CreateDrone chosenComponents)
 
                 else
                     Nothing
@@ -417,10 +467,12 @@ button attributes =
 view : Model -> Html Msg
 view model =
     Element.layout [ backgroundColor Timberwolf ]
-        (column [ centerX, paddingXY None Large, spacing Medium ] <|
-            List.map renderDrone model.drones
-                ++ [ text <| "Crypto: " ++ String.fromInt model.crypto ]
-                ++ [ renderCreateDronePanel model.crypto model.chosenComponents ]
+        (column [ centerX, paddingXY None Large, spacing Medium ]
+            [ Element.wrappedRow [ spacing Small, width (px 800) ] (List.map renderDrone model.drones)
+            , text <| "Crypto: " ++ String.fromFloat model.crypto
+            , text <| "Compute: " ++ String.fromFloat model.compute
+            , renderCreateDronePanel model.crypto model.chosenComponents
+            ]
         )
 
 
